@@ -1,0 +1,15 @@
+{
+  "name": "blockbite/orm",
+  "description": "A lightweight WordPress ORM for custom plugin data tables.",
+  "type": "library",
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "Blockbite\\ORM\\": "src/"
+    }
+  },
+  "require": {
+    "php": ">=7.4"
+  }
+}
+
