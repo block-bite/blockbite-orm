@@ -8,7 +8,7 @@ use WP_Error;
 
 global $wpdb;
 
-class DatabaseOrm
+class BlockbiteOrm
 {
     protected $table;
     protected $select = '*';
