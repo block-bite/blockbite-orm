@@ -1,6 +1,6 @@
 <?php
 
-namespace Blockbite\ORM;
+namespace Blockbite\Orm;
 
 use Error;
 use Exception;
