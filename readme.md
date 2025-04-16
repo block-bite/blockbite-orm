@@ -119,6 +119,20 @@ if ($result->success()) {
 }
 ```
 
+## First Json
+
+Decodes the data field by default
+
+```
+$dynamicContent = Db::table()
+    ->where(['slug' => $slug, 'handle' => 'dynamic_content'])
+    ->firstJson();
+
+$dynamicDesign = Db::table()
+    ->where(['slug' => $designId, 'handle' => 'dynamic_design'])
+    ->firstJson();
+```
+
 ## 📦 Recommended Table Schema
 
 ```
