@@ -253,18 +253,34 @@ class BlockbiteOrm
     }
 
     public function id()
-    {
-        return $this->lastResult->id ?? null;
+{
+    return $this->lastResult->id ?? null;
+}
+
+
+// Already decodes the JSON field 'data' by default
+public function json($decodeJsonFields = ['data'])
+{
+    if (!$this->lastResult) return null;
+
+    $result = (array) $this->lastResult;
+
+    foreach ($decodeJsonFields as $field) {
+        if (isset($result[$field]) && is_string($result[$field])) {
+            $decoded = json_decode($result[$field], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                $result[$field] = $decoded;
+            }
+        }
     }
 
-    public function json()
-    {
-        return $this->lastResult ? (array) $this->lastResult : null;
-    }
+    return (object) $result;
+}
 
-    public function success()
-    {
-        return !empty($this->lastResult);
-    }
+
+public function success()
+{
+    return !empty($this->lastResult);
+}
 
 }
