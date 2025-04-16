@@ -277,6 +277,14 @@ public function json($decodeJsonFields = ['data'])
     return (object) $result;
 }
 
+// This method returns the first result as JSON and decodes the 'data' field by default
+public function firstJson($decodeJsonFields = ['data'])
+{
+    $row = $this->first();
+    $this->lastResult = $row;
+    return $this->json($decodeJsonFields);
+}
+
 
 public function success()
 {
