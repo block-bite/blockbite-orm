@@ -102,6 +102,23 @@ $latest = BlockbiteOrm::table()
     ->get();
 ```
 
+## Update Results
+
+```
+$result = BlockbiteOrm::table('my_table')->upsert($data, ['slug' => 'home']);
+
+// Get the ID
+$id = $result->id();
+
+// Get all fields as array
+$data = $result->json();
+
+// Check if anything actually happened
+if ($result->success()) {
+    // Success logic here
+}
+```
+
 ## 📦 Recommended Table Schema
 
 ```

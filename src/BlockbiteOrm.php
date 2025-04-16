@@ -16,6 +16,8 @@ class BlockbiteOrm
     protected $limit = null;
     protected $order = '';
     protected $data = [];
+    protected $lastResult = null;
+
 
     public function __construct($table = null)
     {
@@ -165,18 +167,28 @@ class BlockbiteOrm
     public function upsert($data, $unique)
     {
         global $wpdb;
+
         $existing = self::table($this->table)->where($unique)->first();
 
         if ($existing) {
-            return self::table($this->table)->where('id', $existing->id)->update($data);
+            self::table($this->table)->where('id', $existing->id)->update($data);
+            $this->lastResult = self::table($this->table)->where('id', $existing->id)->first();
         } else {
-            return self::table($this->table)->insert(array_merge($data, $unique));
+            $inserted = array_merge($data, $unique);
+            self::table($this->table)->insert($inserted);
+            $id = $wpdb->insert_id;
+            $this->lastResult = self::table($this->table)->where('id', $id)->first();
         }
+
+        return $this;
     }
+
+    
 
     public function upsertHandle($data, $handle)
     {
         global $wpdb;
+
         $query = $wpdb->prepare(
             "SELECT * FROM {$this->table} WHERE handle = %s ORDER BY updated_at DESC LIMIT 1",
             $handle
@@ -188,14 +200,17 @@ class BlockbiteOrm
             unset($merged['id']);
             $wpdb->update($this->table, $merged, ['id' => $record->id]);
             $merged['id'] = $record->id;
-            return (object) $merged;
+            $this->lastResult = (object) $merged;
         } else {
             $data['handle'] = $handle;
             $this->insert($data);
             $data['id'] = $wpdb->insert_id;
-            return (object) $data;
+            $this->lastResult = (object) $data;
         }
+
+        return $this;
     }
+
 
     public function extractJsonField(string $field, array $where = [])
     {
@@ -236,4 +251,20 @@ class BlockbiteOrm
 
         return $data;
     }
+
+    public function id()
+    {
+        return $this->lastResult->id ?? null;
+    }
+
+    public function json()
+    {
+        return $this->lastResult ? (array) $this->lastResult : null;
+    }
+
+    public function success()
+    {
+        return !empty($this->lastResult);
+    }
+
 }
