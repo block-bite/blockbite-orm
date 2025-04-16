@@ -133,6 +133,12 @@ $dynamicDesign = Db::table()
     ->firstJson();
 ```
 
+or if the json column is a different column(s)
+
+```
+$meta = Db::table('settings')->whereId(1)->firstJson(['meta', 'payload']);
+```
+
 ## 📦 Recommended Table Schema
 
 ```

@@ -258,10 +258,15 @@ class BlockbiteOrm
 }
 
 
-// Already decodes the JSON field 'data' by default
+
+// normalize json data columns
 public function json($decodeJsonFields = ['data'])
 {
     if (!$this->lastResult) return null;
+
+    if (is_string($decodeJsonFields)) {
+        $decodeJsonFields = [$decodeJsonFields];
+    }
 
     $result = (array) $this->lastResult;
 
@@ -277,11 +282,19 @@ public function json($decodeJsonFields = ['data'])
     return (object) $result;
 }
 
-// This method returns the first result as JSON and decodes the 'data' field by default
+
+
+// normalize json data columns for first
 public function firstJson($decodeJsonFields = ['data'])
 {
     $row = $this->first();
     $this->lastResult = $row;
+
+    // Normalize to array if a string is passed
+    if (is_string($decodeJsonFields)) {
+        $decodeJsonFields = [$decodeJsonFields];
+    }
+
     return $this->json($decodeJsonFields);
 }
 
