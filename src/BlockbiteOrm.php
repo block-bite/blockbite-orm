@@ -120,6 +120,37 @@ class BlockbiteOrm
         return $wpdb->get_results($prepared);
     }
 
+
+    public function getJson($decodeJsonFields = ['data'])
+    {
+        $rows = $this->get();
+        $decoded = [];
+
+        // Normalize input in case string was passed
+        if (is_string($decodeJsonFields)) {
+            $decodeJsonFields = [$decodeJsonFields];
+        }
+
+        foreach ($rows as $row) {
+            $result = (array) $row;
+
+            foreach ($decodeJsonFields as $field) {
+                if (isset($result[$field]) && is_string($result[$field])) {
+                    $decodedField = json_decode($result[$field], true);
+                    if (json_last_error() === JSON_ERROR_NONE) {
+                        $result[$field] = $decodedField;
+                    }
+                }
+            }
+
+            $decoded[] = (object) $result;
+        }
+
+        return $decoded;
+    }
+
+
+
     public function first()
     {
         return $this->limit(1)->get()[0] ?? null;
