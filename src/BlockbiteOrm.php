@@ -159,27 +159,57 @@ class BlockbiteOrm
     public function insert($data)
     {
         global $wpdb;
+
         $data = self::prepAndAddTimestamps($data);
-        $wpdb->insert($this->table, $data);
-        return $wpdb->insert_id;
+        $inserted = $wpdb->insert($this->table, $data);
+
+        // If insert failed, set result to null
+        if ($inserted === false) {
+            $this->lastResult = null;
+            return $this;
+        }
+
+        $id = $wpdb->insert_id;
+
+        // Fetch and store the inserted row for chaining
+        $this->lastResult = self::table($this->table)->where('id', $id)->first();
+
+        return $this;
     }
+
 
     public function update($data)
     {
         global $wpdb;
+
         $data = self::prepAndAddTimestamps($data);
         $where = $this->buildWhereClause();
 
-        if (empty($where['clause'])) return false;
+        if (empty($where['clause'])) {
+            $this->lastResult = null;
+            return $this;
+        }
 
         $existing = $this->first();
-        if (!$existing) return false;
+
+        if (!$existing) {
+            $this->lastResult = null;
+            return $this;
+        }
 
         $merged = array_merge((array) $existing, $data);
         unset($merged['id']);
 
-        return $wpdb->update($this->table, $merged, ['id' => $existing->id]);
+        $updated = $wpdb->update($this->table, $merged, ['id' => $existing->id]);
+
+        // Refetch and store the updated row
+        $this->lastResult = $updated !== false
+            ? self::table($this->table)->where('id', $existing->id)->first()
+            : null;
+
+        return $this;
     }
+
 
     public function delete()
     {
@@ -194,6 +224,10 @@ class BlockbiteOrm
         $table = (new static())->table;
         return $wpdb->delete($table, ['id' => intval($id)]);
     }
+
+
+
+
 
     public function upsert($data, $unique)
     {
