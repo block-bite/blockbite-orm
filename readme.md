@@ -34,6 +34,14 @@ $records = BlockbiteOrm::table()
     ->get();
 ```
 
+with json decoded data column
+
+```
+ $records = Db::table()
+        ->where(['handle' => $handle])
+        ->getJson();
+```
+
 ## Get First Record
 
 ```
