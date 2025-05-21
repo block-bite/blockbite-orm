@@ -149,6 +149,26 @@ class BlockbiteOrm
         return $decoded;
     }
 
+    /*
+        Convert JSON columns to string
+        @param array $data
+    */
+    protected function normalizeJsonColumns(array $data, array $columns = ['data']): array
+    {
+        foreach ($columns as $column) {
+            if (!array_key_exists($column, $data)) {
+                continue;
+            }
+
+            if (is_array($data[$column])) {
+                $data[$column] = json_encode($data[$column]);
+            } elseif (!is_string($data[$column]) || trim($data[$column]) === '') {
+                $data[$column] = '{}';
+            }
+        }
+
+        return $data;
+    }
 
 
     public function first()
@@ -160,18 +180,16 @@ class BlockbiteOrm
     {
         global $wpdb;
 
+        $data = $this->normalizeJsonColumns($data, ['data']);
         $data = self::prepAndAddTimestamps($data);
         $inserted = $wpdb->insert($this->table, $data);
 
-        // If insert failed, set result to null
         if ($inserted === false) {
             $this->lastResult = null;
             return $this;
         }
 
         $id = $wpdb->insert_id;
-
-        // Fetch and store the inserted row for chaining
         $this->lastResult = self::table($this->table)->where('id', $id)->first();
 
         return $this;
@@ -182,6 +200,7 @@ class BlockbiteOrm
     {
         global $wpdb;
 
+        $data = $this->normalizeJsonColumns($data, ['data']);
         $data = self::prepAndAddTimestamps($data);
         $where = $this->buildWhereClause();
 
