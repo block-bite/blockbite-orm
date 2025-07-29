@@ -182,6 +182,11 @@ class BlockbiteOrm
     {
         global $wpdb;
 
+
+        if (!isset($data['data'])) {
+            $data['data'] = json_encode([]);
+        }
+
         $data = $this->normalizeJsonColumns($data, ['data']);
         $data = self::prepAndAddTimestamps($data);
         $inserted = $wpdb->insert($this->table, $data);
@@ -337,9 +342,7 @@ class BlockbiteOrm
             $data['updated_at'] = current_time('mysql');
         }
 
-        if (!isset($data['data'])) {
-            $data['data'] = json_encode([]);
-        }
+
 
         return $data;
     }
