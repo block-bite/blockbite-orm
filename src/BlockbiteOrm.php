@@ -157,18 +157,20 @@ class BlockbiteOrm
     {
         foreach ($columns as $column) {
             if (!array_key_exists($column, $data)) {
-                continue;
+                continue; // Don't touch it if it's not in the update payload
             }
 
             if (is_array($data[$column])) {
                 $data[$column] = json_encode($data[$column]);
             } elseif (!is_string($data[$column]) || trim($data[$column]) === '') {
+                // Set to '{}' if it's explicitly provided but empty
                 $data[$column] = '{}';
             }
         }
 
         return $data;
     }
+
 
 
     public function first()
@@ -216,7 +218,13 @@ class BlockbiteOrm
             return $this;
         }
 
-        $merged = array_merge((array) $existing, $data);
+        $merged = (array) $existing;
+
+        foreach ($data as $key => $value) {
+            // Only overwrite keys that were explicitly passed
+            $merged[$key] = $value;
+        }
+
         unset($merged['id']);
 
         $updated = $wpdb->update($this->table, $merged, ['id' => $existing->id]);
@@ -267,7 +275,7 @@ class BlockbiteOrm
         return $this;
     }
 
-    
+
 
     public function upsertHandle($data, $handle)
     {
@@ -337,55 +345,54 @@ class BlockbiteOrm
     }
 
     public function id()
-{
-    return $this->lastResult->id ?? null;
-}
-
-
-
-// normalize json data columns
-public function json($decodeJsonFields = ['data'])
-{
-    if (!$this->lastResult) return null;
-
-    if (is_string($decodeJsonFields)) {
-        $decodeJsonFields = [$decodeJsonFields];
+    {
+        return $this->lastResult->id ?? null;
     }
 
-    $result = (array) $this->lastResult;
 
-    foreach ($decodeJsonFields as $field) {
-        if (isset($result[$field]) && is_string($result[$field])) {
-            $decoded = json_decode($result[$field], true);
-            if (json_last_error() === JSON_ERROR_NONE) {
-                $result[$field] = $decoded;
+
+    // normalize json data columns
+    public function json($decodeJsonFields = ['data'])
+    {
+        if (!$this->lastResult) return null;
+
+        if (is_string($decodeJsonFields)) {
+            $decodeJsonFields = [$decodeJsonFields];
+        }
+
+        $result = (array) $this->lastResult;
+
+        foreach ($decodeJsonFields as $field) {
+            if (isset($result[$field]) && is_string($result[$field])) {
+                $decoded = json_decode($result[$field], true);
+                if (json_last_error() === JSON_ERROR_NONE) {
+                    $result[$field] = $decoded;
+                }
             }
         }
+
+        return (object) $result;
     }
 
-    return (object) $result;
-}
 
 
+    // normalize json data columns for first
+    public function firstJson($decodeJsonFields = ['data'])
+    {
+        $row = $this->first();
+        $this->lastResult = $row;
 
-// normalize json data columns for first
-public function firstJson($decodeJsonFields = ['data'])
-{
-    $row = $this->first();
-    $this->lastResult = $row;
+        // Normalize to array if a string is passed
+        if (is_string($decodeJsonFields)) {
+            $decodeJsonFields = [$decodeJsonFields];
+        }
 
-    // Normalize to array if a string is passed
-    if (is_string($decodeJsonFields)) {
-        $decodeJsonFields = [$decodeJsonFields];
+        return $this->json($decodeJsonFields);
     }
 
-    return $this->json($decodeJsonFields);
-}
 
-
-public function success()
-{
-    return !empty($this->lastResult);
-}
-
+    public function success()
+    {
+        return !empty($this->lastResult);
+    }
 }
