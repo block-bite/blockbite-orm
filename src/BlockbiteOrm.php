@@ -309,6 +309,23 @@ class BlockbiteOrm
     }
 
 
+    public function upsertWhere(array $data, array $where)
+    {
+        global $wpdb;
+        $this->where($where);
+        $existing = $this->first();
+        if ($existing) {
+            $this->where('id', $existing->id);
+            $this->update($data);
+        } else {
+            $this->insert($data);
+        }
+        return $this;
+    }
+
+
+
+
     public function extractJsonField(string $field, array $where = [])
     {
         global $wpdb;
