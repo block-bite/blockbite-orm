@@ -43,10 +43,29 @@ class BlockbiteOrm
     {
         if (is_array($key)) {
             foreach ($key as $k => $v) {
-                $this->wheres[] = [$k, '=', $v];
+                // Store with explicit boolean connector for future OR support
+                $this->wheres[] = [$k, '=', $v, 'AND'];
             }
         } else {
-            $this->wheres[] = [$key, '=', $value];
+            $this->wheres[] = [$key, '=', $value, 'AND'];
+        }
+        return $this;
+    }
+
+    /**
+     * Add an OR where condition.
+     * Consecutive orWhere calls produce a linear sequence relying on SQL precedence (AND before OR).
+     * Example: where(A)->orWhere(B)->where(C) => (A OR B) AND C due to precedence rules.
+     * For more complex grouping, a future grouping API would be needed.
+     */
+    public function orWhere($key, $value = null)
+    {
+        if (is_array($key)) {
+            foreach ($key as $k => $v) {
+                $this->wheres[] = [$k, '=', $v, 'OR'];
+            }
+        } else {
+            $this->wheres[] = [$key, '=', $value, 'OR'];
         }
         return $this;
     }
@@ -58,7 +77,7 @@ class BlockbiteOrm
 
     public function whereIn($key, $values)
     {
-        $this->wheres[] = [$key, 'IN', $values];
+        $this->wheres[] = [$key, 'IN', $values, 'AND'];
         return $this;
     }
 
@@ -77,23 +96,43 @@ class BlockbiteOrm
     protected function buildWhereClause()
     {
         global $wpdb;
-        $clause = [];
+        $segments = [];
         $values = [];
 
-        foreach ($this->wheres as $where) {
-            list($column, $operator, $value) = $where;
-            if (strtoupper($operator) === 'IN') {
-                $placeholders = implode(', ', array_fill(0, count($value), '%s'));
-                $clause[] = "$column IN ($placeholders)";
-                $values = array_merge($values, $value);
-            } else {
-                $clause[] = "$column $operator %s";
-                $values[] = $value;
+        foreach ($this->wheres as $index => $where) {
+            // Backwards compatibility: if only 3 elements, default connector AND
+            $column = $where[0] ?? null;
+            $operator = $where[1] ?? '=';
+            $value = $where[2] ?? null;
+            $boolean = strtoupper($where[3] ?? 'AND');
+
+            if ($column === null) {
+                continue; // skip malformed entry
             }
+
+            $operatorUpper = strtoupper($operator);
+            if ($operatorUpper === 'IN' && is_array($value)) {
+                $placeholders = implode(', ', array_fill(0, count($value), '%s'));
+                $segmentSql = "$column IN ($placeholders)";
+                $segmentValues = $value;
+            } else {
+                $segmentSql = "$column $operator %s";
+                $segmentValues = [$value];
+            }
+
+            // Do not prepend boolean on first segment
+            if ($index === 0) {
+                $segments[] = $segmentSql;
+            } else {
+                $segments[] = "$boolean $segmentSql";
+            }
+            $values = array_merge($values, $segmentValues);
         }
 
+        $clauseString = implode(' ', $segments); // segments already include connectors/spaces
+
         return [
-            'clause' => implode(' AND ', $clause),
+            'clause' => $clauseString,
             'values' => $values
         ];
     }
