@@ -17,6 +17,7 @@ class BlockbiteOrm
     protected $order = '';
     protected $data = [];
     protected $lastResult = null;
+    protected $withRelations = [];
 
 
     public function __construct($table = null)
@@ -36,6 +37,50 @@ class BlockbiteOrm
     public function select($columns)
     {
         $this->select = is_array($columns) ? implode(', ', $columns) : $columns;
+        return $this;
+    }
+
+    /**
+     * Eager-load a simple read-only relation into the result set.
+     *
+     * @param string $relationName The JSON key under which related rows will be nested.
+     * @param array  $config       Relation config: [
+     *                              'table'       => string,        // related table
+     *                              'local_key'   => string,        // column on base table rows
+     *                              'foreign_key' => string,        // column on related table rows
+     *                              'type'        => 'one'|'many',  // optional, default 'one'
+     *                              'columns'     => array|string   // optional, default '*'
+     *                            ]
+     * @return self
+     */
+    public function with(string $relationName, array $config): self
+    {
+        $required = ['table', 'local_key', 'foreign_key'];
+        foreach ($required as $key) {
+            if (!isset($config[$key]) || !is_string($config[$key]) || $config[$key] === '') {
+                throw new Exception("with(): missing or invalid required config key '$key'");
+            }
+        }
+
+        $type = isset($config['type']) ? strtolower($config['type']) : 'one';
+        if (!in_array($type, ['one', 'many'], true)) {
+            throw new Exception("with(): type must be 'one' or 'many'");
+        }
+
+        $columns = $config['columns'] ?? '*';
+        if (is_array($columns)) {
+            $columns = implode(', ', $columns);
+        }
+
+        $this->withRelations[] = [
+            'name'        => $relationName,
+            'table'       => $config['table'],
+            'local_key'   => $config['local_key'],
+            'foreign_key' => $config['foreign_key'],
+            'type'        => $type,
+            'columns'     => $columns,
+        ];
+
         return $this;
     }
 
@@ -156,7 +201,9 @@ class BlockbiteOrm
         }
 
         $prepared = $wpdb->prepare($sql, ...$where['values']);
-        return $wpdb->get_results($prepared);
+        $rows = $wpdb->get_results($prepared);
+        $rows = $this->applyWithRelations($rows);
+        return $rows;
     }
 
 
@@ -178,6 +225,44 @@ class BlockbiteOrm
                     $decodedField = json_decode($result[$field], true);
                     if (json_last_error() === JSON_ERROR_NONE) {
                         $result[$field] = $decodedField;
+                    }
+                }
+            }
+
+            // Decode JSON fields on nested relations if present
+            foreach ($this->withRelations as $rel) {
+                $name = $rel['name'];
+                if (array_key_exists($name, $result)) {
+                    if ($rel['type'] === 'one') {
+                        if (is_object($result[$name])) {
+                            $nested = (array) $result[$name];
+                            foreach ($decodeJsonFields as $field) {
+                                if (isset($nested[$field]) && is_string($nested[$field])) {
+                                    $df = json_decode($nested[$field], true);
+                                    if (json_last_error() === JSON_ERROR_NONE) {
+                                        $nested[$field] = $df;
+                                    }
+                                }
+                            }
+                            $result[$name] = (object) $nested;
+                        }
+                    } else { // many
+                        if (is_array($result[$name])) {
+                            $decodedChildren = [];
+                            foreach ($result[$name] as $child) {
+                                $nested = (array) $child;
+                                foreach ($decodeJsonFields as $field) {
+                                    if (isset($nested[$field]) && is_string($nested[$field])) {
+                                        $df = json_decode($nested[$field], true);
+                                        if (json_last_error() === JSON_ERROR_NONE) {
+                                            $nested[$field] = $df;
+                                        }
+                                    }
+                                }
+                                $decodedChildren[] = (object) $nested;
+                            }
+                            $result[$name] = $decodedChildren;
+                        }
                     }
                 }
             }
@@ -430,6 +515,44 @@ class BlockbiteOrm
             }
         }
 
+        // Decode nested relation JSON fields if eager-loaded
+        foreach ($this->withRelations as $rel) {
+            $name = $rel['name'];
+            if (isset($result[$name])) {
+                if ($rel['type'] === 'one') {
+                    if (is_object($result[$name])) {
+                        $nested = (array) $result[$name];
+                        foreach ($decodeJsonFields as $field) {
+                            if (isset($nested[$field]) && is_string($nested[$field])) {
+                                $df = json_decode($nested[$field], true);
+                                if (json_last_error() === JSON_ERROR_NONE) {
+                                    $nested[$field] = $df;
+                                }
+                            }
+                        }
+                        $result[$name] = (object) $nested;
+                    }
+                } else {
+                    if (is_array($result[$name])) {
+                        $decodedChildren = [];
+                        foreach ($result[$name] as $child) {
+                            $nested = (array) $child;
+                            foreach ($decodeJsonFields as $field) {
+                                if (isset($nested[$field]) && is_string($nested[$field])) {
+                                    $df = json_decode($nested[$field], true);
+                                    if (json_last_error() === JSON_ERROR_NONE) {
+                                        $nested[$field] = $df;
+                                    }
+                                }
+                            }
+                            $decodedChildren[] = (object) $nested;
+                        }
+                        $result[$name] = $decodedChildren;
+                    }
+                }
+            }
+        }
+
         return (object) $result;
     }
 
@@ -454,4 +577,130 @@ class BlockbiteOrm
     {
         return !empty($this->lastResult);
     }
+
+    /**
+     * Internal: apply eager-loaded relations to the base rows.
+     * @param array $rows Array of stdClass rows from base query
+     * @return array Rows with nested relations attached
+     */
+    protected function applyWithRelations(array $rows): array
+    {
+        if (empty($this->withRelations)) {
+            return $rows;
+        }
+
+        global $wpdb;
+
+        foreach ($this->withRelations as $rel) {
+            $relationName = $rel['name'];
+            $localKey = $rel['local_key'];
+            $foreignKey = $rel['foreign_key'];
+            $relatedTable = $rel['table'];
+            $type = $rel['type'];
+            $columns = $rel['columns'] ?? '*';
+
+            // Collect local key values
+            $values = [];
+            foreach ($rows as $row) {
+                $val = null;
+                if (is_object($row) && isset($row->{$localKey})) {
+                    $val = $row->{$localKey};
+                } elseif (is_array($row) && isset($row[$localKey])) {
+                    $val = $row[$localKey];
+                }
+                if ($val !== null) {
+                    $values[] = $val;
+                }
+            }
+
+            $values = array_values(array_unique($values));
+
+            // If no values, attach empty structures
+            if (empty($values)) {
+                foreach ($rows as $i => $row) {
+                    if (is_object($row)) {
+                        $row->{$relationName} = ($type === 'one') ? null : [];
+                    } elseif (is_array($row)) {
+                        $row[$relationName] = ($type === 'one') ? null : [];
+                    }
+                    $rows[$i] = $row;
+                }
+                continue;
+            }
+
+            // Fetch related rows with one query using WHERE IN
+            $placeholders = implode(', ', array_fill(0, count($values), '%s'));
+            $sql = "SELECT {$columns} FROM {$relatedTable} WHERE {$foreignKey} IN ({$placeholders})";
+            $prepared = $wpdb->prepare($sql, ...$values);
+            $relatedRows = $wpdb->get_results($prepared);
+
+            // Index related rows by foreign key
+            $index = [];
+            foreach ($relatedRows as $rr) {
+                $fkVal = $rr->{$foreignKey} ?? null;
+                if ($fkVal === null) continue;
+                if (!isset($index[$fkVal])) {
+                    $index[$fkVal] = [];
+                }
+                $index[$fkVal][] = $rr;
+            }
+
+            // Attach per base row
+            foreach ($rows as $i => $row) {
+                $lkVal = is_object($row) ? ($row->{$localKey} ?? null) : ($row[$localKey] ?? null);
+                $matches = ($lkVal !== null && isset($index[$lkVal])) ? $index[$lkVal] : [];
+                if ($type === 'one') {
+                    $attach = empty($matches) ? null : $matches[0];
+                } else {
+                    $attach = $matches; // array of stdClass
+                }
+
+                if (is_object($row)) {
+                    $row->{$relationName} = $attach;
+                } else {
+                    $row[$relationName] = $attach;
+                }
+                $rows[$i] = $row;
+            }
+        }
+
+        return $rows;
+    }
 }
+
+/*
+Usage examples:
+
+// 1) Forward relation: wp_blockbite_content -> wp_blockbite (one)
+$records = Db::table('wp_blockbite_content')
+    ->where(['post_id' => 14])
+    ->with('blockbite', [
+        'table'       => 'wp_blockbite',
+        'local_key'   => 'blockbite_id',
+        'foreign_key' => 'id',
+        'type'        => 'one',
+    ])
+    ->getJson();
+
+// 2) Reverse relation: wp_blockbite -> wp_blockbite_content (many)
+$record = Db::table('wp_blockbite')
+    ->where(['id' => 7])
+    ->with('contents', [
+        'table'       => 'wp_blockbite_content',
+        'local_key'   => 'id',
+        'foreign_key' => 'blockbite_id',
+        'type'        => 'many',
+    ])
+    ->firstJson();
+
+// 3) Self relation: wp_blockbite -> parent (one)
+$record = Db::table('wp_blockbite')
+    ->where(['id' => 7])
+    ->with('parent', [
+        'table'       => 'wp_blockbite',
+        'local_key'   => 'parent_id',
+        'foreign_key' => 'id',
+        'type'        => 'one',
+    ])
+    ->firstJson();
+*/
