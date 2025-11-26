@@ -399,6 +399,16 @@ $record = Db::table('wp_blockbite')
 - Related rows are nested; related columns are not flattened into the base row.
 - Updates remain explicit per table (e.g., `Db::table('wp_blockbite_content')->where(['blockbite_id' => 7])->update([...]);`).
 
+### Explicit per-table update example
+
+```php
+Db::table('wp_blockbite_content')
+    ->where(['blockbite_id' => 7])
+    ->update([
+        'content' => 'New content value'
+    ]);
+```
+
 ## 📦 Recommended Table Schema
 
 ```
