@@ -26,8 +26,16 @@ class BlockbiteOrm
             throw new Exception('WordPress database class not found.');
         }
         global $wpdb;
-        // default wp_blockbite table otherwise can be wp_blockbite_{custom}
-        $this->table = !$table ? $wpdb->prefix . 'blockbite' : $wpdb->prefix . $table;
+        // Default table is {prefix}blockbite; if a table is provided, only
+        // prepend the WP prefix when it's not already present to avoid
+        // double-prefixing (e.g., wp_wp_blockbite).
+        if (!$table) {
+            $this->table = $wpdb->prefix . 'blockbite';
+        } else {
+            $this->table = (strpos($table, $wpdb->prefix) === 0)
+                ? $table
+                : $wpdb->prefix . $table;
+        }
     }
 
     public static function table($table = null)
