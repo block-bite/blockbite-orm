@@ -93,7 +93,11 @@ class BlockbiteOrm
             }
         }
 
-        $type = isset($config['type']) ? strtolower($config['type']) : 'one';
+        // Default type depends on mode: relation => 'one', query => 'many'
+        $isQueryMode = isset($config['where']) && !isset($config['local_key']) && !isset($config['foreign_key']);
+        $type = isset($config['type'])
+            ? strtolower($config['type'])
+            : ($isQueryMode ? 'many' : 'one');
         if (!in_array($type, ['one', 'many'], true)) {
             throw new Exception("with(): type must be 'one' or 'many'");
         }
@@ -702,11 +706,18 @@ class BlockbiteOrm
                 $relatedQuery = self::table($relatedTable)->select($columns);
 
                 $conds = $rel['where'] ?? [];
+                // If any equality condition explicitly uses null, treat as no match
+                // to distinguish between 0 and null and avoid accidental returns.
+                $hasExplicitNull = false;
                 if (is_array($conds) && !empty($conds)) {
                     $isAssoc = array_keys($conds) !== range(0, count($conds) - 1);
                     if ($isAssoc) {
                         foreach ($conds as $k => $v) {
-                            $relatedQuery->where($k, $v);
+                            if ($v === null) {
+                                $hasExplicitNull = true;
+                            } else {
+                                $relatedQuery->where($k, $v);
+                            }
                         }
                     } else {
                         foreach ($conds as $c) {
@@ -715,7 +726,10 @@ class BlockbiteOrm
                             $op = strtoupper($c[1] ?? '=');
                             $val = $c[2] ?? null;
 
-                            if ($op === 'IN' && is_array($val)) {
+                            if ($val === null && ($op === '=' || $op === '==' || $op === 'IS')) {
+                                // Explicit null: mark and skip adding condition so query returns no rows
+                                $hasExplicitNull = true;
+                            } elseif ($op === 'IN' && is_array($val)) {
                                 $relatedQuery->whereIn($col, $val);
                             } elseif (in_array($op, ['JSON_CONTAINS', 'JSONCONTAINS'], true)) {
                                 $relatedQuery->whereJsonContains($col, $val);
@@ -726,8 +740,8 @@ class BlockbiteOrm
                         }
                     }
                 }
-
-                $relatedRows = $relatedQuery->get();
+                // If an explicit null condition was detected, return empty set
+                $relatedRows = $hasExplicitNull ? [] : $relatedQuery->get();
                 $attach = ($type === 'one') ? ($relatedRows[0] ?? null) : $relatedRows;
 
                 foreach ($rows as $i => $row) {
