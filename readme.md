@@ -327,6 +327,16 @@ $rows = Db::table('wp_blockbite_content')
     ->get();
 ```
 
+
+## Search Json
+
+```
+$dynamic_content = Db::table()
+        ->where('handle', 'dynamic-content')
+        ->whereJsonContains('data->post_type', $post_type)
+        ->getJson();
+```
+
 ## Eager-loading with `with()` (read-only)
 
 The `with()` method allows you to nest related rows into the returned data without introducing full model relationships or any implicit write behavior. It performs one additional `SELECT ... WHERE IN (...)` per relation and merges the results under the provided relation name.
@@ -432,3 +442,5 @@ CREATE TABLE wp_blockbite (
 ## 🧠 License
 
 MIT — open and free.
+
+
