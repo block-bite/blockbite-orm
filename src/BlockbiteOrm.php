@@ -165,7 +165,12 @@ class BlockbiteOrm
             }
 
             $operatorUpper = strtoupper($operator);
-            if ($operatorUpper === 'IN' && is_array($value)) {
+            if ($operatorUpper === 'RAW') {
+                // Expect $column to actually contain the raw SQL segment
+                // and $value to be an array of bound values for that segment.
+                $segmentSql = (string) $column;
+                $segmentValues = is_array($value) ? $value : [$value];
+            } elseif ($operatorUpper === 'IN' && is_array($value)) {
                 $placeholders = implode(', ', array_fill(0, count($value), '%s'));
                 $segmentSql = "$column IN ($placeholders)";
                 $segmentValues = $value;
@@ -585,6 +590,35 @@ class BlockbiteOrm
     public function success()
     {
         return !empty($this->lastResult);
+    }
+
+    /**
+     * Add a JSON contains condition for a JSON column.
+     * Example input: jsonPath 'data->post_type' checks JSON_EXTRACT(data, '$.post_type').
+     * Uses JSON_CONTAINS, suitable when the target field is an array; for scalar matching,
+     * pass a JSON-encoded scalar string (e.g., '"post"').
+     */
+    public function whereJsonContains(string $jsonPath, $value, string $boolean = 'AND')
+    {
+        // Parse "column->path->nested" into column and JSON path
+        $parts = explode('->', $jsonPath);
+        $column = array_shift($parts);
+        $path = '$.' . implode('.', $parts);
+
+        // Build RAW SQL segment for JSON_CONTAINS(JSON_EXTRACT(...), %s)
+        $segment = "JSON_CONTAINS(JSON_EXTRACT({$column}, '{$path}'), %s)";
+
+        // Ensure value is correctly bound; callers should provide JSON strings for scalars
+        $this->wheres[] = [$segment, 'RAW', [is_array($value) ? json_encode($value) : $value], strtoupper($boolean)];
+        return $this;
+    }
+
+    /**
+     * OR variant for JSON contains conditions.
+     */
+    public function orWhereJsonContains(string $jsonPath, $value)
+    {
+        return $this->whereJsonContains($jsonPath, $value, 'OR');
     }
 
     /**
