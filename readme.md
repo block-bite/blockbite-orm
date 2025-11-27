@@ -337,6 +337,32 @@ $dynamic_content = Db::table()
         ->getJson();
 ```
 
+### Dynamic content by `source_type`
+
+Filter by a JSON key on `data` and optionally eager-load related `sources`:
+
+```php
+$dynamic_content = Db::table()
+    ->where('handle', 'dynamic-content')
+    ->whereJsonContains('data->source_type', $post_type)
+    ->with('sources', [
+        'table'  => 'wp_blockbite_source',
+        'where'  => [
+            ['post_id', '=', $post_type],
+        ],
+    ])
+    ->get();
+```
+
+Or without eager loading:
+
+```php
+$dynamic_content = Db::table()
+    ->where('handle', 'dynamic-content')
+    ->whereJsonContains('data->source_type', $post_type)
+    ->get();
+```
+
 ## Eager-loading with `with()` (read-only)
 
 The `with()` method allows you to nest related rows into the returned data without introducing full model relationships or any implicit write behavior. It performs one additional `SELECT ... WHERE IN (...)` per relation and merges the results under the provided relation name.

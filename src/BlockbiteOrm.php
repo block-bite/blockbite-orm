@@ -50,24 +50,46 @@ class BlockbiteOrm
     }
 
     /**
-     * Eager-load a simple read-only relation into the result set.
+     * Eager-load data into the result set.
+     *
+     * Two modes are supported:
+     * 1) Relation mode (joins by keys):
+     *    [
+     *      'table'       => string,        // related table
+     *      'local_key'   => string,        // column on base table rows
+     *      'foreign_key' => string,        // column on related table rows
+     *      'type'        => 'one'|'many',  // optional, default 'one'
+     *      'columns'     => array|string   // optional, default '*'
+     *    ]
+     *
+     * 2) Query mode (independent query with where):
+     *    [
+     *      'table'   => string,
+     *      'where'   => array,           // associative map [col=>val] OR array of [col, op, val]
+     *      'type'    => 'one'|'many',    // optional, default 'many'
+     *      'columns' => array|string     // optional, default '*'
+     *    ]
+     * In query mode, the fetched data set is attached to each base row under $relationName.
      *
      * @param string $relationName The JSON key under which related rows will be nested.
-     * @param array  $config       Relation config: [
-     *                              'table'       => string,        // related table
-     *                              'local_key'   => string,        // column on base table rows
-     *                              'foreign_key' => string,        // column on related table rows
-     *                              'type'        => 'one'|'many',  // optional, default 'one'
-     *                              'columns'     => array|string   // optional, default '*'
-     *                            ]
+     * @param array  $config       See above for supported keys.
      * @return self
      */
     public function with(string $relationName, array $config): self
     {
-        $required = ['table', 'local_key', 'foreign_key'];
-        foreach ($required as $key) {
-            if (!isset($config[$key]) || !is_string($config[$key]) || $config[$key] === '') {
-                throw new Exception("with(): missing or invalid required config key '$key'");
+        // Determine mode: relation (keys) or query (where)
+        $isQueryMode = isset($config['where']) && !isset($config['local_key']) && !isset($config['foreign_key']);
+
+        if ($isQueryMode) {
+            if (!isset($config['table']) || !is_string($config['table']) || $config['table'] === '') {
+                throw new Exception("with(): missing or invalid required config key 'table'");
+            }
+        } else {
+            $required = ['table', 'local_key', 'foreign_key'];
+            foreach ($required as $key) {
+                if (!isset($config[$key]) || !is_string($config[$key]) || $config[$key] === '') {
+                    throw new Exception("with(): missing or invalid required config key '$key'");
+                }
             }
         }
 
@@ -81,14 +103,23 @@ class BlockbiteOrm
             $columns = implode(', ', $columns);
         }
 
-        $this->withRelations[] = [
-            'name'        => $relationName,
-            'table'       => $config['table'],
-            'local_key'   => $config['local_key'],
-            'foreign_key' => $config['foreign_key'],
-            'type'        => $type,
-            'columns'     => $columns,
+        $entry = [
+            'name'    => $relationName,
+            'table'   => $config['table'],
+            'type'    => $type,
+            'columns' => $columns,
         ];
+
+        if ($isQueryMode) {
+            $entry['mode'] = 'query';
+            $entry['where'] = $config['where'];
+        } else {
+            $entry['mode'] = 'relation';
+            $entry['local_key'] = $config['local_key'];
+            $entry['foreign_key'] = $config['foreign_key'];
+        }
+
+        $this->withRelations[] = $entry;
 
         return $this;
     }
@@ -596,10 +627,12 @@ class BlockbiteOrm
      * Add a JSON contains condition for a JSON column.
      * Example input: jsonPath 'data->post_type' checks JSON_EXTRACT(data, '$.post_type').
      * Uses JSON_CONTAINS, suitable when the target field is an array; for scalar matching,
-     * pass a JSON-encoded scalar string (e.g., '"post"').
+     * you can pass a plain PHP scalar (e.g., 'post'); it will be JSON-encoded automatically.
      */
     public function whereJsonContains(string $jsonPath, $value, string $boolean = 'AND')
     {
+
+  
         // Parse "column->path->nested" into column and JSON path
         $parts = explode('->', $jsonPath);
         $column = array_shift($parts);
@@ -608,8 +641,32 @@ class BlockbiteOrm
         // Build RAW SQL segment for JSON_CONTAINS(JSON_EXTRACT(...), %s)
         $segment = "JSON_CONTAINS(JSON_EXTRACT({$column}, '{$path}'), %s)";
 
-        // Ensure value is correctly bound; callers should provide JSON strings for scalars
-        $this->wheres[] = [$segment, 'RAW', [is_array($value) ? json_encode($value) : $value], strtoupper($boolean)];
+        // Ensure value is correctly bound as valid JSON
+        // - Arrays/objects: json_encode directly
+        // - Scalars (e.g., 'page', 1, true): json_encode to make valid JSON ("page", 1, true)
+        // - If the caller already passed a JSON-looking string, use it as-is
+        $bound = null;
+        if (is_array($value) || is_object($value)) {
+            $bound = json_encode($value);
+        } elseif (is_string($value)) {
+            $trim = trim($value);
+            $looksJson = $trim === 'null'
+                || $trim === 'true'
+                || $trim === 'false'
+                || (strlen($trim) >= 2 && (
+                    ($trim[0] === '"' && substr($trim, -1) === '"') ||
+                    ($trim[0] === '[' && substr($trim, -1) === ']') ||
+                    ($trim[0] === '{' && substr($trim, -1) === '}')
+                ))
+                || is_numeric($trim);
+
+            $bound = $looksJson ? $value : json_encode($value);
+        } else {
+            // bool, int, float, null
+            $bound = json_encode($value);
+        }
+
+        $this->wheres[] = [$segment, 'RAW', [$bound], strtoupper($boolean)];
         return $this;
     }
 
@@ -636,11 +693,59 @@ class BlockbiteOrm
 
         foreach ($this->withRelations as $rel) {
             $relationName = $rel['name'];
-            $localKey = $rel['local_key'];
-            $foreignKey = $rel['foreign_key'];
             $relatedTable = $rel['table'];
             $type = $rel['type'];
             $columns = $rel['columns'] ?? '*';
+
+            // Query mode: run an independent query with provided where and attach to each row
+            if (($rel['mode'] ?? 'relation') === 'query') {
+                $relatedQuery = self::table($relatedTable)->select($columns);
+
+                $conds = $rel['where'] ?? [];
+                if (is_array($conds) && !empty($conds)) {
+                    $isAssoc = array_keys($conds) !== range(0, count($conds) - 1);
+                    if ($isAssoc) {
+                        foreach ($conds as $k => $v) {
+                            $relatedQuery->where($k, $v);
+                        }
+                    } else {
+                        foreach ($conds as $c) {
+                            $col = $c[0] ?? null;
+                            if ($col === null) continue;
+                            $op = strtoupper($c[1] ?? '=');
+                            $val = $c[2] ?? null;
+
+                            if ($op === 'IN' && is_array($val)) {
+                                $relatedQuery->whereIn($col, $val);
+                            } elseif (in_array($op, ['JSON_CONTAINS', 'JSONCONTAINS'], true)) {
+                                $relatedQuery->whereJsonContains($col, $val);
+                            } else {
+                                // Fallback to equality where; operators other than '=' are not supported here
+                                $relatedQuery->where($col, $val);
+                            }
+                        }
+                    }
+                }
+
+                $relatedRows = $relatedQuery->get();
+                $attach = ($type === 'one') ? ($relatedRows[0] ?? null) : $relatedRows;
+
+                foreach ($rows as $i => $row) {
+                    if (is_object($row)) {
+                        $row->{$relationName} = $attach;
+                    } else {
+                        $row[$relationName] = $attach;
+                    }
+                    $rows[$i] = $row;
+                }
+
+                // Done with this relation, continue to next
+                continue;
+            }
+
+            // Relation mode (default)
+            $localKey = $rel['local_key'];
+            $foreignKey = $rel['foreign_key'];
 
             // Collect local key values
             $values = [];
